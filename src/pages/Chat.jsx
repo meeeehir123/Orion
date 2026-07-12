@@ -1,11 +1,10 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import Groq from "groq-sdk";
-import { doc, getDoc, setDoc, updateDoc, deleteField } from "firebase/firestore"; // deleteField import kiya
+import { doc, getDoc, setDoc, updateDoc, deleteField } from "firebase/firestore";
 import { db, auth } from "../firebase";
 import Welcome from "../components/Welcome";
-import logo from "../assets/logo.png.jpeg"; 
-import { FiCopy, FiThumbsUp, FiThumbsDown, FiTrash2 } from "react-icons/fi"; // FiTrash2 icon add kiya
+import { FiCopy, FiThumbsUp, FiThumbsDown, FiTrash2, FiMenu, FiX } from "react-icons/fi";
 
 const groq = new Groq({ 
   apiKey: import.meta.env.VITE_GROQ_API_KEY,
@@ -20,11 +19,11 @@ export default function Chat() {
   const [isListening, setIsListening] = useState(false);
   const [isSpeakingEnabled, setIsSpeakingEnabled] = useState(true);
   const [isThinking, setIsThinking] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // Mobile sidebar toggle
   
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   const recognition = SpeechRecognition ? new SpeechRecognition() : null;
 
-  // DELETE FUNCTION - Add kiya
   const deleteChat = async (e, id) => {
     e.stopPropagation();
     if (!auth.currentUser) return;
@@ -55,9 +54,7 @@ export default function Chat() {
       if (!auth.currentUser) return;
       const docRef = doc(db, "users", auth.currentUser.uid);
       const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        setHistory(docSnap.data().chats || {});
-      }
+      if (docSnap.exists()) setHistory(docSnap.data().chats || {});
     };
     fetchHistory();
   }, []);
@@ -67,17 +64,12 @@ export default function Chat() {
     setIsThinking(true);
     let botResponse = "";
     const lowerInput = input.toLowerCase();
-    if (lowerInput.includes("who created you")) botResponse = "I am created or developed by Meehir Tripathi, he is the founder of Orion AI.";
+    if (lowerInput.includes("who created you")) botResponse = "I am created by Meehir Tripathi.";
     else if (lowerInput.includes("who are you")) botResponse = "I am Orion AI.";
-    else if (lowerInput.includes("tell me more about meehir")) botResponse = "Meehir is a btech student of 3rd year at GL Bajaj Institute of Technology and Management.";
-    else if (lowerInput.includes("what is orion ai")) botResponse = "Orion AI is an advanced conversational assistant designed to help you with coding, learning, and productivity.";
-    else if (lowerInput.includes("help")) botResponse = "I can help you answer questions, write code, summarize text, and assist you with your daily tasks!";
-    else if (lowerInput.includes("thank you") || lowerInput.includes("thanks")) botResponse = "You're very welcome!";
+    else if (lowerInput.includes("help")) botResponse = "I can help you answer questions, write code, and more!";
 
     if (botResponse) {
-      const userMsg = { role: "user", content: input };
-      const aiMsg = { role: "assistant", content: botResponse };
-      setMessages([...messages, userMsg, aiMsg]);
+      setMessages([...messages, { role: "user", content: input }, { role: "assistant", content: botResponse }]);
       setInput("");
       speak(botResponse);
       setIsThinking(false);
@@ -90,85 +82,80 @@ export default function Chat() {
     setInput("");
 
     try {
-      const systemInstruction = { role: "system", content: "You are Orion AI." };
       const response = await groq.chat.completions.create({
-        messages: [systemInstruction, ...newMessages],
+        messages: [{ role: "system", content: "You are Orion AI." }, ...newMessages],
         model: "llama-3.3-70b-versatile",
       });
-
       const aiMsg = response.choices[0].message;
-      const updatedMessages = [...newMessages, aiMsg];
-      setMessages(updatedMessages);
+      setMessages([...newMessages, aiMsg]);
       speak(aiMsg.content);
       
       const userDocRef = doc(db, "users", auth.currentUser.uid);
       await updateDoc(userDocRef, {
-        [`chats.${currentChatId}.messages`]: updatedMessages,
+        [`chats.${currentChatId}.messages`]: [...newMessages, aiMsg],
         [`chats.${currentChatId}.title`]: userMsg.content.substring(0, 20)
       }).catch(async () => {
-        await setDoc(userDocRef, { chats: { [currentChatId]: { messages: updatedMessages, title: userMsg.content.substring(0, 20) } } }, { merge: true });
+        await setDoc(userDocRef, { chats: { [currentChatId]: { messages: [...newMessages, aiMsg], title: userMsg.content.substring(0, 20) } } }, { merge: true });
       });
-      setHistory(prev => ({...prev, [currentChatId]: { messages: updatedMessages, title: userMsg.content.substring(0, 20) }}));
+      setHistory(prev => ({...prev, [currentChatId]: { messages: [...newMessages, aiMsg], title: userMsg.content.substring(0, 20) }}));
     } catch (error) { console.error("Error:", error); } finally { setIsThinking(false); }
   };
 
   const toggleVoice = () => {
     if (!recognition) return;
-    if (isListening) {
-      recognition.stop();
-      setIsListening(false);
-    } else {
+    if (isListening) { recognition.stop(); setIsListening(false); } 
+    else {
       recognition.start();
       setIsListening(true);
       recognition.onresult = (event) => {
         setInput(event.results[0][0].transcript);
         setIsListening(false);
-        setTimeout(() => sendMessage(), 500); // Auto-send
+        setTimeout(() => sendMessage(), 500);
       };
-      recognition.onerror = () => setIsListening(false);
     }
   };
 
   return (
-    <div className="flex h-screen bg-[#000000] text-gray-200 relative overflow-hidden">
-      <aside className="w-64 border-r border-white/5 p-4 mt-16 flex flex-col gap-2 z-30 bg-black/40 backdrop-blur-md relative">
-        <h2 className="text-xs font-bold text-gray-500 uppercase px-2">History</h2>
-        <button onClick={() => { setCurrentChatId(Date.now().toString()); setMessages([]); }} className="mb-4 w-full px-4 py-2 text-sm bg-indigo-600/20 border border-indigo-500/30 rounded-lg hover:bg-indigo-600/40 transition text-indigo-300">+ New Chat</button>
-        <div id="history-list" className="flex-1 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-indigo-500/50">
+    <div className="flex min-h-screen bg-black text-gray-200">
+      {/* Mobile Header */}
+      <div className="md:hidden fixed top-0 w-full p-4 bg-black/80 flex items-center z-50 border-b border-white/10">
+        <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2">
+          {isSidebarOpen ? <FiX size={24} /> : <FiMenu size={24} />}
+        </button>
+        <span className="ml-4 font-bold text-lg">Orion AI</span>
+      </div>
+
+      {/* Sidebar */}
+      <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-black border-r border-white/10 p-4 transform transition-transform ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 md:relative mt-16 md:mt-0 flex flex-col gap-2`}>
+        <button onClick={() => { setCurrentChatId(Date.now().toString()); setMessages([]); setIsSidebarOpen(false); }} 
+          className="mb-4 w-full px-4 py-2 text-sm bg-indigo-600/20 border border-indigo-500/30 rounded-lg hover:bg-indigo-600/40"> + New Chat </button>
+        <div className="flex-1 overflow-y-auto">
           {Object.entries(history).map(([id, chat]) => (
-            <div key={id} onClick={() => { setCurrentChatId(id); setMessages(chat.messages); }}
-              className={`flex items-center justify-between px-4 py-2 mb-2 rounded-lg cursor-pointer text-sm transition ${currentChatId === id ? 'bg-indigo-600/30' : 'bg-white/5 hover:bg-white/10'}`}>
+            <div key={id} onClick={() => { setCurrentChatId(id); setMessages(chat.messages); setIsSidebarOpen(false); }}
+              className={`flex items-center justify-between px-4 py-2 mb-2 rounded-lg cursor-pointer text-sm ${currentChatId === id ? 'bg-indigo-600/30' : 'bg-white/5'}`}>
               <span className="truncate flex-1">{chat.title}</span>
-              <button onClick={(e) => deleteChat(e, id)} className="text-gray-500 hover:text-red-500 transition"><FiTrash2 size={14} /></button>
+              <button onClick={(e) => deleteChat(e, id)} className="hover:text-red-500"><FiTrash2 size={14} /></button>
             </div>
           ))}
         </div>
-        <div className="mt-2 pt-2 border-t border-white/10 flex flex-col gap-1">
-          <Link to="/terms" className="text-xs text-gray-400 hover:text-white transition text-left px-2 py-1">Terms and Conditions</Link>
-          <Link to="/premium" className="text-xs text-indigo-400 hover:text-indigo-300 transition text-left px-2 py-1 block">Orion AI Premium</Link>
-        </div>
       </aside>
 
-      <main className="flex-1 flex flex-col h-screen overflow-hidden p-6 pt-20 max-w-3xl mx-auto w-full z-10 relative">
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[400px] bg-indigo-900/20 blur-[120px] rounded-full pointer-events-none" />
-        <div className="flex-1 overflow-y-auto pr-2">
-          {messages.length === 0 ? <div className="flex items-center justify-center h-full"><Welcome /></div> : 
-          <div className="flex flex-col gap-6 pb-6">
-            {messages.map((msg, i) => (
-              <div key={i} className="flex flex-col gap-2 w-full">
-                <div className={`p-4 rounded-2xl w-full ${msg.role === 'user' ? 'bg-indigo-600/20 border border-indigo-500/30 ml-auto' : 'bg-white/5 mr-auto'}`}>{msg.content}</div>
-                {msg.role === 'assistant' && (
-                  <div className="flex items-center gap-3 ml-2"><button className="text-gray-500 hover:text-white transition"><FiCopy size={14} /></button><button className="text-gray-500 hover:text-green-500 transition"><FiThumbsUp size={14} /></button><button className="text-gray-500 hover:text-red-500 transition"><FiThumbsDown size={14} /></button></div>
-                )}
-              </div>
-            ))}
-          </div>}
+      {/* Main Area */}
+      <main className="flex-1 flex flex-col min-h-screen pt-20 md:pt-6 p-4 max-w-3xl mx-auto w-full">
+        <div className="flex-1 overflow-y-auto pb-20">
+          {messages.length === 0 ? <Welcome /> : messages.map((msg, i) => (
+            <div key={i} className={`p-4 rounded-2xl mb-4 w-fit ${msg.role === 'user' ? 'bg-indigo-600/20 ml-auto' : 'bg-white/5 mr-auto'}`}>{msg.content}</div>
+          ))}
         </div>
-        <div className="w-full bg-[#111] border border-white/10 rounded-2xl flex items-center p-2 gap-2 shrink-0 mb-4">
-          <button onClick={() => setIsSpeakingEnabled(!isSpeakingEnabled)} className={`p-2 transition ${isSpeakingEnabled ? 'text-indigo-400' : 'text-gray-600'}`}>{isSpeakingEnabled ? "🔊" : "🔇"}</button>
-          <input className="flex-1 bg-transparent p-2 text-white outline-none" placeholder={isThinking ? "Orion is thinking..." : "Ask Orion..."} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); sendMessage(); } }} disabled={isThinking} />
-          <button onClick={toggleVoice} className={`p-2 transition ${isListening ? 'text-red-500 animate-pulse' : 'text-gray-400 hover:text-indigo-400'}`}>🎤</button>
-          <button onClick={sendMessage} disabled={isThinking} className={`p-3 rounded-xl transition ${isThinking ? 'bg-gray-600 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'}`}>{isThinking ? "..." : "Send"}</button>
+        
+        {/* Input Bar */}
+        <div className="fixed bottom-0 w-full max-w-3xl left-0 right-0 mx-auto p-4 bg-black">
+          <div className="bg-[#111] border border-white/10 rounded-2xl flex items-center p-2 gap-2">
+            <button onClick={() => setIsSpeakingEnabled(!isSpeakingEnabled)}>{isSpeakingEnabled ? "🔊" : "🔇"}</button>
+            <input className="flex-1 bg-transparent p-2 outline-none" value={input} onChange={(e) => setInput(e.target.value)} placeholder="Ask Orion..." />
+            <button onClick={toggleVoice} className={isListening ? "text-red-500" : "text-gray-400"}>🎤</button>
+            <button onClick={sendMessage} className="p-2 bg-indigo-600 rounded-lg">Send</button>
+          </div>
         </div>
       </main>
     </div>
